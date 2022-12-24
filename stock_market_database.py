@@ -14,53 +14,53 @@ class StockPriceHistoryDatabase:
         self.indices = indices
         self.tickers = []
 
-        # get the list of companies in the indices
+        # Get the list of companies in the indices
         if 'CAC40' in self.indices:
             self.tickers.extend(
                 pd.read_html(self.WIKI + 'CAC_40', flavor='html5lib')[4]['Ticker'].to_list())
 
         print(self.tickers)
 
-        # create database engine
+        # Create database engine
         self.engine = create_engine(f'postgresql://pavelkurach@localhost:5432/stock_price_history')
         if not database_exists(self.engine.url):
             create_database(self.engine.url)
         print("Successfully created a database")
 
-        # get stock market data
+        # Get stock market data
         stock_market_data = []
         for ticker in self.tickers:
             stock_market_data.append(yf.download(tickers=ticker,
                                                  period="5d",
                                                  interval="5m").reset_index().iloc[:-20, :])
 
-        # put stock market data to the database and add a primary key
-        # primary key is needed for sqlalchemy automap
+        # Put stock market data to the database and add a primary key
+        # Primary key is needed for sqlalchemy automap
         for frame, ticker in zip(stock_market_data, self.tickers):
             frame.to_sql(ticker, self.engine, if_exists='replace', index=False)
             with self.engine.connect() as con:
                 con.execute(f'ALTER TABLE "{ticker}" ADD PRIMARY KEY ("{frame.columns[0]}");')
 
-        # create an object-relation mapping with sqlalchemy automap
+        # Create an object-relation mapping with sqlalchemy automap
         self.base = automap_base()
         self.base.prepare(autoload_with=self.engine)
         self.data_classes = {ticker: cls for ticker, cls in zip(self.tickers, self.base.classes)}
 
-        # start a session
+        # Start a session
         self.session = Session(self.engine)
 
-        # get volatilities
+        # Get volatilities
         self.sigma = {}
         for ticker in self.tickers:
             query = self.session.query(self.data_classes[ticker])
             sigma_df = pd.read_sql(query.statement, query.session.bind, index_col='Datetime')
             self.sigma[ticker] = sigma_df.Close.pct_change().std()
 
-        # get datetime of the latest ticks
+        # Get datetime of the latest ticks
         self.updates = {ticker: self.session.query(self.data_classes[ticker]).order_by(
             self.data_classes[ticker].Datetime.desc()).first().Datetime for ticker in self.tickers}
 
-    def update_database(self):
+    def update_database(self) -> None:
         """
         Update database function, should be regularly called.
         """
@@ -75,7 +75,7 @@ class StockPriceHistoryDatabase:
                 self.session.commit()
                 self.updates[ticker] = tick['Datetime']
 
-    def fetch_shock_history(self, user_indices: list, user_updates: dict) -> list:
+    def fetch_shock_history(self, user_updates: dict, user_indices: list = ['CAC40']) -> list:
         """
         Retrieving stock market shock updates
         :param user_indices: list of indices that contain companies user want to be notified about
@@ -87,7 +87,7 @@ class StockPriceHistoryDatabase:
         result = []
 
         if 'CAC40' in user_indices:
-            user_tickers.append(
+            user_tickers.extend(
                 pd.read_html(self.WIKI + 'CAC_40', flavor='html5lib')[4]['Ticker'].to_list())
 
         for ticker in user_tickers:
@@ -103,16 +103,17 @@ class StockPriceHistoryDatabase:
                     continue
 
                 change_ratio = (tick["Close"] / last_close - 1) / self.sigma[ticker]
-                if change_ratio > 2:
+                if change_ratio > 3:
                     result.append(
-                        f'{ticker} stock price moved by {(tick["Close"] / last_close - 1) * 100:.2f}% '
+                        f'{ticker} stock price moved by '
+                        f'{(tick["Close"] / last_close - 1) * 100:.2f}% '
                         f'({change_ratio:.2f}x volatility) '
                         f'from {user_updates[ticker].strftime("%H:%M")} '
                         f'to {tick["Datetime"].strftime("%H:%M")}.')
                 last_close = tick["Close"]
                 user_updates[ticker] = tick['Datetime']
 
-            return result
+        return result
 
     def print_first_table(self):
         query = self.session.query(self.data_classes['AIR.PA'])
@@ -121,6 +122,16 @@ class StockPriceHistoryDatabase:
 
 def main():
     db = StockPriceHistoryDatabase()
+
+    user_tickers = pd.read_html(
+        'https://en.wikipedia.org/wiki/CAC_40', flavor='html5lib')[4]['Ticker'].to_list()
+
+    user_updates = {ticker: '2022-12-23 10:00:00'
+                    for ticker in user_tickers}
+    messages = db.fetch_shock_history(user_updates=user_updates)
+    for msg in messages:
+        print(msg)
+
     print("before update")
     db.print_first_table()
     db.update_database()
@@ -128,6 +139,7 @@ def main():
     db.print_first_table()
     print("sigmas")
     print(db.sigma)
+
 
 
 if __name__ == '__main__':
