@@ -10,7 +10,10 @@ import yfinance as yf
 class StockPriceHistoryDatabase:
     WIKI = 'https://en.wikipedia.org/wiki/'
 
-    def __init__(self, indices=['CAC40', 'S&P500', 'FTSE100', 'DAX']):
+    def __init__(self, indices=None):
+
+        if indices is None:
+            indices = ['CAC40', 'S&P500', 'FTSE100', 'DAX']
 
         self.indices = indices
         self.tickers = []
@@ -121,7 +124,7 @@ class StockPriceHistoryDatabase:
                         continue
 
                     change_ratio = (tick["Close"] / last_close - 1) / self.sigma[ticker]
-                    if change_ratio > 3:
+                    if change_ratio > 3 or change_ratio < -3:
                         result.append(
                             f'{ticker} stock price moved by '
                             f'{(tick["Close"] / last_close - 1) * 100:.2f}% '
