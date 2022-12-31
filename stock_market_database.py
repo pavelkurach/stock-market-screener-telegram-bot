@@ -14,7 +14,7 @@ class StockPriceHistoryDatabase:
 
         if indices is None:
             indices = ['CAC40', 'S&P500', 'FTSE100', 'DAX']
-
+            #indices = ['CAC40', 'S&P500']
         self.indices = indices
         self.tickers = []
 
