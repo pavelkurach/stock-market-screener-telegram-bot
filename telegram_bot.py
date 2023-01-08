@@ -22,7 +22,7 @@ def monitor(update: Update, context: CallbackContext) -> None:
     """Send a message when the command /start is issued."""
     if not ('indices' in context.user_data.keys()):
         context.user_data['indices'] = []
-        context.user_data['tickers'] = []
+        context.user_data['symbols'] = []
         context.user_data['updates'] = {}
 
     args = context.args
@@ -31,17 +31,17 @@ def monitor(update: Update, context: CallbackContext) -> None:
     msg = []
 
     for index in args:
-        if index in TICKERS_DICT.keys():
+        if index in SYMBOLS_DICT.keys():
             if index in context.user_data['indices']:
                 context.bot.send_message(chat_id=update.effective_chat.id,
                                          text=f'Already monitoring {index} companies.')
             else:
                 context.user_data['indices'].append(index)
-                context.user_data['tickers'].extend(TICKERS_DICT[index])
+                context.user_data['symbols'].extend(SYMBOLS_DICT[index])
                 msg.append(index)
-                for ticker in TICKERS_DICT[index]:
+                for symbol in SYMBOLS_DICT[index]:
                     # It should be "datetime.now", I put another datetime for test only
-                    context.user_data['updates'][ticker] = datetime.strptime('2023-01-06 10:00:00',
+                    context.user_data['updates'][symbol] = datetime.strptime('2023-01-06 10:00:00',
                                                                              '%Y-%m-%d %H:%M:%S')
         else:
             context.bot.send_message(chat_id=update.effective_chat.id,
@@ -54,7 +54,7 @@ def monitor(update: Update, context: CallbackContext) -> None:
 
     context.job_queue.run_repeating(notify_about_latest_shocks, interval=30, first=5,
                                     context={'updates': context.user_data['updates'],
-                                             'tickers': context.user_data['tickers'],
+                                             'symbols': context.user_data['symbols'],
                                              'chat_id': update.message.chat_id})
 
 
@@ -69,7 +69,7 @@ def stop(update: Update, context: CallbackContext) -> None:
     args = context.args
     if not args:
         context.user_data['indices'] = []
-        context.user_data['tickers'] = []
+        context.user_data['symbols'] = []
         context.user_data['updates'] = {}
         context.bot.send_message(chat_id=update.effective_chat.id,
                                  text='Stopped monitoring any company.')
@@ -79,7 +79,7 @@ def stop(update: Update, context: CallbackContext) -> None:
     msg = []
 
     for index in args:
-        if index in TICKERS_DICT.keys():
+        if index in SYMBOLS_DICT.keys():
             if index in context.user_data['indices']:
                 context.user_data['indices'].remove(index)
                 msg.append(index)
@@ -87,9 +87,9 @@ def stop(update: Update, context: CallbackContext) -> None:
                 context.bot.send_message(chat_id=update.effective_chat.id,
                                          text=f'You are not monitoring {index} companies.')
 
-    context.user_data['tickers'] = []
+    context.user_data['symbols'] = []
     for index in context.user_data['indices']:
-        context.user_data['tickers'].extend(TICKERS_DICT[index])
+        context.user_data['symbols'].extend(SYMBOLS_DICT[index])
 
     if msg:
         context.bot.send_message(chat_id=update.effective_chat.id,
@@ -114,7 +114,7 @@ def notify_about_latest_shocks(context: CallbackContext) -> None:
     Notify the user about the latest stock market shocks
     """
     print(context.job.context['updates'])
-    messages = db.fetch_shock_history(user_tickers=context.job.context['tickers'],
+    messages = db.fetch_shock_history(user_symbols=context.job.context['symbols'],
                                       user_updates=context.job.context['updates'])
     if messages:
         for msg in messages:
@@ -136,14 +136,14 @@ def main() -> None:
     global db
     db = stock_market_database.StockPriceHistoryDatabase()
 
-    # Get tickers lists
-    global TICKERS_DICT
+    # Get symbols lists
+    global SYMBOLS_DICT
     cac40 = pd.read_html(WIKI + 'CAC_40', flavor='html5lib')[4]['Ticker'].to_list()
     sp500 = pd.read_html(WIKI + 'List_of_S%26P_500_companies',
                          flavor='html5lib')[0]['Symbol'].to_list()
     ftse100 = pd.read_html(WIKI + 'FTSE_100_Index', flavor='html5lib')[4]['EPIC'].to_list()
     dax = pd.read_html(WIKI + 'DAX', flavor='html5lib')[4]['Ticker'].to_list()
-    TICKERS_DICT = {
+    SYMBOLS_DICT = {
         'CAC40': cac40,
         'S&P500': sp500,
         'FTSE100': ftse100,

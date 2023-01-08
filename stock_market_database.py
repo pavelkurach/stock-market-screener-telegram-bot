@@ -54,18 +54,18 @@ class StockPriceHistoryDatabase:
         logger.info('Successfully created a database')
 
     def _get_stock_market_data(self):
-        for ticker in self.symbols:
-            frame = yf.download(tickers=ticker,
+        for symbol in self.symbols:
+            frame = yf.download(tickers=symbol,
                                 period="5d",
-                                interval="5m").reset_index().iloc[:-20, :]
+                                interval="5m", progress=False).reset_index().iloc[:-20, :]
 
             if (not frame.empty) and 'Datetime' in frame.columns:
-                frame.to_sql(ticker, self.engine, if_exists='replace', index=False)
+                frame.to_sql(symbol, self.engine, if_exists='replace', index=False)
                 with self.engine.connect() as con:
                     con.execute(
-                        f'ALTER TABLE "{ticker}" ADD PRIMARY KEY ("{frame.columns[0]}");')
+                        f'ALTER TABLE "{symbol}" ADD PRIMARY KEY ("{frame.columns[0]}");')
             else:
-                self.symbols.remove(ticker)
+                self.symbols.remove(symbol)
 
         logger.info('Downloaded data for the following symbols: %s', ' '.join(self.symbols))
 
@@ -80,10 +80,10 @@ class StockPriceHistoryDatabase:
 
     def _get_volatilities(self):
         sigma = {}
-        for ticker in self.symbols:
-            query = self.session.query(self.data_classes[ticker])
+        for symbol in self.symbols:
+            query = self.session.query(self.data_classes[symbol])
             sigma_df = pd.read_sql(query.statement, query.session.bind)
-            sigma[ticker] = sigma_df.Close.pct_change().std()
+            sigma[symbol] = sigma_df.Close.pct_change().std()
         logger.info('Calculated volatilities')
         return sigma
 
@@ -105,58 +105,58 @@ class StockPriceHistoryDatabase:
         self.sigma = self._get_volatilities()
 
         # Get datetime of the latest ticks
-        self.updates = {ticker: self.session.query(self.data_classes[ticker]).order_by(
-            self.data_classes[ticker].Datetime.desc()).first().Datetime for ticker in self.symbols}
+        self.updates = {symbol: self.session.query(self.data_classes[symbol]).order_by(
+            self.data_classes[symbol].Datetime.desc()).first().Datetime for symbol in self.symbols}
 
     def update_database(self) -> None:
         """
         Update database function, should be regularly called.
         """
-        for ticker in self.symbols:
-            new_data = yf.download(tickers=ticker,
+        for symbol in self.symbols:
+            new_data = yf.download(tickers=symbol,
                                    period="1d",
                                    interval="5m", progress=False).reset_index()
-            new_data = new_data[new_data['Datetime'] > self.updates[ticker]]
+            new_data = new_data[new_data['Datetime'] > self.updates[symbol]]
             for _, tick in new_data.iterrows():
-                new_tick = self.data_classes[ticker](**tick.to_dict())
+                new_tick = self.data_classes[symbol](**tick.to_dict())
                 self.session.add(new_tick)
                 self.session.commit()
-                self.updates[ticker] = tick['Datetime']
+                self.updates[symbol] = tick['Datetime']
         logger.info('Updated database')
 
-    def fetch_shock_history(self, user_tickers: list, user_updates: dict) -> list:
+    def fetch_shock_history(self, user_symbols: list, user_updates: dict) -> list:
         """
         Retrieving stock market shock updates
-        :param user_tickers: list of companies user want to be notified about
-        :param user_updates: contains datetime for each ticker, the function notifies about
+        :param user_symbols: list of companies user want to be notified about
+        :param user_updates: contains datetime for each symbol, the function notifies about
         shocks happening after this datetime
         :return: list of string (each string contains a message about a recent market shock)
         """
         result = []
 
-        for ticker in user_tickers:
-            if ticker in self.symbols:
-                query = self.session.query(self.data_classes[ticker]).filter(
-                    self.data_classes[ticker].Datetime >= user_updates[ticker])
-                ticker_data = pd.read_sql(query.statement, query.session.bind)
+        for symbol in user_symbols:
+            if symbol in self.symbols:
+                query = self.session.query(self.data_classes[symbol]).filter(
+                    self.data_classes[symbol].Datetime >= user_updates[symbol])
+                symbol_data = pd.read_sql(query.statement, query.session.bind)
 
                 last_close = None
 
-                for _, tick in ticker_data.iterrows():
+                for _, tick in symbol_data.iterrows():
                     if _ == 0:
                         last_close = tick["Close"]
                         continue
 
-                    change_ratio = (tick["Close"] / last_close - 1) / self.sigma[ticker]
+                    change_ratio = (tick["Close"] / last_close - 1) / self.sigma[symbol]
                     if change_ratio > 3 or change_ratio < -3:
                         result.append(
-                            f'{ticker} stock price moved by '
+                            f'{symbol} stock price moved by '
                             f'{(tick["Close"] / last_close - 1) * 100:.2f}% '
                             f'({change_ratio:.2f}x volatility) '
-                            f'from {user_updates[ticker].strftime("%H:%M")} '
+                            f'from {user_updates[symbol].strftime("%H:%M")} '
                             f'to {tick["Datetime"].strftime("%H:%M")}.')
                     last_close = tick["Close"]
-                    user_updates[ticker] = tick['Datetime']
+                    user_updates[symbol] = tick['Datetime']
         logger.info('Sent data to a user.')
         return result
 
