@@ -1,3 +1,4 @@
+import logging
 import pandas as pd
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import Session
@@ -6,36 +7,39 @@ from sqlalchemy_utils import database_exists, create_database
 from sqlalchemy import MetaData
 import yfinance as yf
 
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
 
 class StockPriceHistoryDatabase:
     WIKI = 'https://en.wikipedia.org/wiki/'
 
-    def __init__(self, indices=None):
+    @staticmethod
+    def get_symbols(indices=None):
+        symbols = []
 
-        if indices is None:
-            indices = ['CAC40', 'S&P500', 'FTSE100', 'DAX']
-            #indices = ['CAC40', 'S&P500']
-        self.indices = indices
-        self.tickers = []
+        if 'CAC40' in indices:
+            symbols.extend(pd.read_html(StockPriceHistoryDatabase.WIKI + 'CAC_40',
+                                        flavor='html5lib')[4]['Ticker'].to_list())
 
-        # Get the list of companies in the indices
-        if 'CAC40' in self.indices:
-            self.tickers.extend(pd.read_html(self.WIKI + 'CAC_40',
-                                             flavor='html5lib')[4]['Ticker'].to_list())
+        if 'S&P500' in indices:
+            symbols.extend(pd.read_html(StockPriceHistoryDatabase.WIKI +
+                                        'List_of_S%26P_500_companies',
+                                        flavor='html5lib')[0]['Symbol'].to_list())
 
-        if 'S&P500' in self.indices:
-            self.tickers.extend(pd.read_html(self.WIKI + 'List_of_S%26P_500_companies',
-                                             flavor='html5lib')[0]['Symbol'].to_list())
+        if 'FTSE100' in indices:
+            symbols.extend(pd.read_html(StockPriceHistoryDatabase.WIKI + 'FTSE_100_Index',
+                                        flavor='html5lib')[4]['EPIC'].to_list())
 
-        if 'FTSE100' in self.indices:
-            self.tickers.extend(pd.read_html(self.WIKI + 'FTSE_100_Index',
-                                             flavor='html5lib')[4]['EPIC'].to_list())
+        if 'DAX' in indices:
+            symbols.extend(pd.read_html(StockPriceHistoryDatabase.WIKI + 'DAX',
+                                        flavor='html5lib')[4]['Ticker'].to_list())
 
-        if 'DAX' in self.indices:
-            self.tickers.extend(pd.read_html(self.WIKI + 'DAX',
-                                             flavor='html5lib')[4]['Ticker'].to_list())
+        return symbols
 
-        # Create database engine
+    def _create_database_engine(self):
         self.engine = create_engine(
             f'postgresql://pavelkurach@localhost:5432/stock_price_history')
         if not database_exists(self.engine.url):
@@ -47,10 +51,10 @@ class StockPriceHistoryDatabase:
             metadata.drop_all()
             self.engine.dispose()
 
-        print("Successfully created a database")
+        logger.info('Successfully created a database')
 
-        # Get stock market data
-        for ticker in self.tickers:
+    def _get_stock_market_data(self):
+        for ticker in self.symbols:
             frame = yf.download(tickers=ticker,
                                 period="5d",
                                 interval="5m").reset_index().iloc[:-20, :]
@@ -61,35 +65,54 @@ class StockPriceHistoryDatabase:
                     con.execute(
                         f'ALTER TABLE "{ticker}" ADD PRIMARY KEY ("{frame.columns[0]}");')
             else:
-                self.tickers.remove(ticker)
+                self.symbols.remove(ticker)
 
-        # Create an object-relation mapping with sqlalchemy automap
+        logger.info('Downloaded data for the following symbols: %s', ' '.join(self.symbols))
+
+    def _create_orm_with_automap(self):
         self.base = automap_base()
         self.base.prepare(autoload_with=self.engine)
         self.data_classes = {}
         for cls in self.base.classes:
             self.data_classes[cls.__name__] = cls
-        self.tickers = list(self.data_classes.keys())
+        self.symbols = list(self.data_classes.keys())
+        logger.info('Created ORM with automap.')
+
+    def _get_volatilities(self):
+        sigma = {}
+        for ticker in self.symbols:
+            query = self.session.query(self.data_classes[ticker])
+            sigma_df = pd.read_sql(query.statement, query.session.bind)
+            sigma[ticker] = sigma_df.Close.pct_change().std()
+        logger.info('Calculated volatilities')
+        return sigma
+
+    def __init__(self, indices=None):
+
+        if indices is None:
+            #indices = ['CAC40', 'S&P500', 'FTSE100', 'DAX']
+            indices = ['CAC40']
+        self.indices = indices
+        self.symbols = StockPriceHistoryDatabase.get_symbols(indices)
+
+        self._create_database_engine()
+        self._get_stock_market_data()
+        self._create_orm_with_automap()
 
         # Start a session
         self.session = Session(self.engine)
 
-        # Get volatilities
-        self.sigma = {}
-        for ticker in self.tickers:
-            query = self.session.query(self.data_classes[ticker])
-            sigma_df = pd.read_sql(query.statement, query.session.bind)
-            self.sigma[ticker] = sigma_df.Close.pct_change().std()
+        self.sigma = self._get_volatilities()
 
         # Get datetime of the latest ticks
         self.updates = {ticker: self.session.query(self.data_classes[ticker]).order_by(
-            self.data_classes[ticker].Datetime.desc()).first().Datetime for ticker in self.tickers}
+            self.data_classes[ticker].Datetime.desc()).first().Datetime for ticker in self.symbols}
 
     def update_database(self) -> None:
         """
         Update database function, should be regularly called.
         """
-        for ticker in self.tickers:
+        for ticker in self.symbols:
             new_data = yf.download(tickers=ticker,
                                    period="1d",
                                    interval="5m", progress=False).reset_index()
@@ -99,6 +122,7 @@ class StockPriceHistoryDatabase:
                 self.session.add(new_tick)
                 self.session.commit()
                 self.updates[ticker] = tick['Datetime']
+        logger.info('Updated database')
 
     def fetch_shock_history(self, user_tickers: list, user_updates: dict) -> list:
         """
@@ -111,7 +135,7 @@ class StockPriceHistoryDatabase:
         result = []
 
         for ticker in user_tickers:
-            if ticker in self.tickers:
+            if ticker in self.symbols:
                 query = self.session.query(self.data_classes[ticker]).filter(
                     self.data_classes[ticker].Datetime >= user_updates[ticker])
                 ticker_data = pd.read_sql(query.statement, query.session.bind)
@@ -133,19 +157,6 @@ class StockPriceHistoryDatabase:
                             f'to {tick["Datetime"].strftime("%H:%M")}.')
                     last_close = tick["Close"]
                     user_updates[ticker] = tick['Datetime']
-
+        logger.info('Sent data to a user.')
         return result
 
-    def print_tables(self):
-        for ticker in self.tickers:
-            query = self.session.query(self.data_classes[ticker])
-            print(ticker)
-            print(pd.read_sql(query.statement, query.session.bind))
-
-
-def main():
-    pass
-
-
-if __name__ == '__main__':
-    main()

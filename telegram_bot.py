@@ -41,7 +41,7 @@ def monitor(update: Update, context: CallbackContext) -> None:
                 msg.append(index)
                 for ticker in TICKERS_DICT[index]:
                     # It should be "datetime.now", I put another datetime for test only
-                    context.user_data['updates'][ticker] = datetime.strptime('2022-12-30 10:00:00',
+                    context.user_data['updates'][ticker] = datetime.strptime('2023-01-06 10:00:00',
                                                                              '%Y-%m-%d %H:%M:%S')
         else:
             context.bot.send_message(chat_id=update.effective_chat.id,
