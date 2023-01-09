@@ -90,8 +90,8 @@ class StockPriceHistoryDatabase:
     def __init__(self, indices=None):
 
         if indices is None:
-            #indices = ['CAC40', 'S&P500', 'FTSE100', 'DAX']
-            indices = ['CAC40']
+            indices = ['CAC40', 'S&P500', 'FTSE100', 'DAX']
+            #indices = ['CAC40']
         self.indices = indices
         self.symbols = StockPriceHistoryDatabase.get_symbols(indices)
 
