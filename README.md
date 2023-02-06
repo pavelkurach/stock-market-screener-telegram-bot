@@ -18,4 +18,7 @@ Stock price data is initialized with a 5-day history and a 5-minutes interval.
 2. [telegram_bot.py](https://github.com/pavelkurach/stock-market-screener-telegram-bot/blob/master/telegram_bot.py)
 
 Bot-user interaction is implemented.
-![image](https://user-images.githubusercontent.com/101255623/211352791-b22582da-e561-4088-9fce-1a9f81268802.png)
+
+## Example
+
+<img width="548" alt="image" src="https://user-images.githubusercontent.com/101255623/217085094-6626c0ab-2905-4b92-8ed4-009a25db31c2.png">
